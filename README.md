@@ -64,3 +64,9 @@ const workerKey = `${workerClass}:${workerId}:h`;
 ```
 
 Each worker monitors its `pid` field of its hashes, and must exit if this field changes.
+
+We setup Deno options with `--inspect` and can attach a debugger as seen below:
+
+![image](https://user-images.githubusercontent.com/899558/134762517-4ccc28b3-6f8e-4ab9-8529-49054eb7f1ee.png)
+
+<hr>
