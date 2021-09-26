@@ -1,6 +1,18 @@
-# dm
+# deno-run-worker
 
-Redis-driven microservice to manage Deno processes
+Scrips to run Deno workers.
+
+My intended research direction is to enable Redis-driven microservices that are "fun and fast" to develop and test.
+
+- Javascript/Typescript is popular and familiar
+- Deno is secure by default
+- Redis maps well to programming data structures
+
+I'm an NodeJS professional who believes Redis and Deno are GREAT. I'm exploring how the development and testing of microservices can be simplified by limiting side-effects to Redis.
+
+BTW My career previously revolved around Java and PostgreSQL. I want to write services that integrate Redis to PostgreSQL such that PostgreSQL can be used for bulk persistence, indirectly via Redis, in a decoupled way that is easily mocked out for development and testing.
+
+If we want to accelerate development, we need to reduce cognitive load by de-scoping side effects. I have decided to explore Redis-only microservices, and applying these to the development of chat bots.
 
 ## demo
 

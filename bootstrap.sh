@@ -1,10 +1,11 @@
 #!/bin/bash
 set -eu
 
+INPUT_SECRET=`cat`
+
 trap 'echo "TRAP ERR LINENO=${LINENO}"' ERR
 
 WORKER_CLASS="${1}"
-
 redis-cli type "${WORKER_CLASS}:h" | grep -q '^hash$'
 redis-cli hexists "${WORKER_CLASS}:h" workerCount | grep -q '^0$'
 
@@ -47,7 +48,7 @@ do
     echo "Worker ${workerId}:" consumerId `
       redis-cli hget ${WORKER_CLASS}:${workerId}:h consumerId
     `
-    deno run --allow-net=127.0.0.1:6379 --allow-run ./main.ts \
+    echo "${INPUT_SECRET}" | deno run --allow-net=127.0.0.1:6379 --allow-run ./main.ts \
       ${WORKER_REPO} ${WORKER_CLASS} ${WORKER_VERSION} ${workerId} ||
       echo "ERROR ${WORKER_CLASS} ${WORKER_VERSION} ${workerId}"
     redis-cli hdel ${WORKER_CLASS}:${workerId}:h pid | grep '^[0-1]$'
