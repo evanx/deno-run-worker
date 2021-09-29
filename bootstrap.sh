@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eu
 
-INPUT_SECRET=`cat`
+INPUT_SECRET=`cat` # beware that env vars are leaky
 
 trap 'echo "TRAP ERR LINENO=${LINENO}"' ERR
 
@@ -17,6 +17,7 @@ echo ${WORKER_CLASS} | grep -q '^[a-z][-a-z0-9_]*$'
 if [ "${WORKER_VERSION}" = 'local' ]
 then
   echo "local development"
+  WORKER_REPO=${LOCAL_WORKER_REPO}
   echo "${WORKER_REPO}" | grep -q "^/"
   [ -f ${WORKER_REPO}/${WORKER_CLASS}/worker.ts ]
 elif [ "${WORKER_VERSION}" = 'main' ]

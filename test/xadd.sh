@@ -1,7 +1,6 @@
 #!/bin/bash
 set -eu
-echo ${WORKER_REPO} | grep -q '^/'
-cd ${WORKER_REPO}/deno-run-worker
+cd ${LOCAL_WORKER_REPO}/deno-run-worker
 [ -f cli.ts ]
 ref=`openssl rand 6 -base64`
 echo "ref=${ref}" 

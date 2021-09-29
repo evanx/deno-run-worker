@@ -1,13 +1,19 @@
 #!/bin/bash
 set -eu
 
-INPUT_SECRET=`openssl rand 32 -hex`
+INPUT_SECRET=`openssl rand 16 -hex`
+INPUT_IV=`openssl rand 16 -hex`
+SECRET_JSON=`
+  echo -n '{ "password": "hello", "type": "demo-config" }' |
+  openssl base64
+`
+encrypted=`
+  echo ${INPUT_SECRET} ${INPUT_IV} ${SECRET_JSON} | 
+    deno run test/encrypt.ts
+`
 
 echo "Repo ${WORKER_REPO:=https://raw.githubusercontent.com/evanx}"
 echo "Class ${WORKER_CLASS:=deno-date-iso}"
-echo "Secret ${INPUT_SECRET}"
-
-SECRET_JSON='{ "password": "hello" }'
 
 for key in \
   ${WORKER_CLASS}:h \
@@ -33,7 +39,9 @@ hmset() {
   hset ${1} version ${WORKER_VERSION:=main}
   hset ${1} requestStream ${WORKER_CLASS}:req:x
   hset ${1} responseStream ${WORKER_CLASS}:res:x
-  hset ${1} secretAlg aes256
+  hset ${1} encryptedAlg aes-128-cbc
+  hset ${1} encryptedIv ${INPUT_IV}
+  hset ${1} encrypted ${encrypted}
 }
 
 hmset "${WORKER_CLASS}:h"
@@ -41,18 +49,12 @@ for workerId in 1
 do
   hmset ${WORKER_CLASS}:${workerId}:h
   hset ${WORKER_CLASS}:${workerId}:h consumerId ${workerId}
-  hset ${WORKER_CLASS}:${workerId}:h requestLimit 1
+  hset ${WORKER_CLASS}:${workerId}:h requestLimit 10
   redis-cli lpush ${WORKER_CLASS}:start:q ${workerId} | grep -q '^[1-9]$'
-  echo "${SECRET_JSON}" | 
-    openssl enc -aes256 -k ${INPUT_SECRET} -base64 | 
-    redis-cli -x hset ${WORKER_CLASS}:${workerId}:h encrypted | grep -q '^1$'
-  redis-cli hset ${WORKER_CLASS}:${workerId}:h encryptedType 'v1:aes256'
-  redis-cli hget ${WORKER_CLASS}:${workerId}:h encrypted | 
-    openssl enc -d -aes256 -base64 -k ${INPUT_SECRET}
 done
 
 redis-cli xgroup create "${WORKER_CLASS}:req:x" 'worker' '$' mkstream | grep -q '^OK$'
 
-hset ${WORKER_CLASS}:1:h denoOptions "--inspect=127.0.0.1:9228"
+hset ${WORKER_CLASS}:1:h denoOptions ${WORKER_DENO_OPTIONS:=--inspect=127.0.0.1:9228}
 
-echo ${INPUT_SECRET} | exec ./bootstrap.sh "${WORKER_CLASS}"
+echo workerAES-v0 ${INPUT_SECRET} | exec ./bootstrap.sh "${WORKER_CLASS}"

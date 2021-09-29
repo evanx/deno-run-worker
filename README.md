@@ -8,16 +8,16 @@ I believe that if we want to accelerate development, we need to reduce cognitive
 - Deno: secure by default
 - Redis: maps well to programming data structures
 
-I'm an NodeJS professional, previously Java and PostgreSQL, who believes Redis and Deno are GREAT. I'm exploring how the development and testing of microservices can be simplified by limiting side-effects to Redis. Having said that, I want to write utility services that integrate Redis to PostgreSQL such that PostgreSQL can be used for bulk long-term persistence.
+We will also explore services that integrate Redis to PostgreSQL such that PostgreSQL can be used for bulk long-term persistence, e.g. https://github.com/evanx/lula-sync.
 
-## demo
+## Demo
 
 ```shell
-./clean.sh && ./demo.sh
+test/clean.sh && test/demo.sh
 ```
 
-The `demo.sh` shell script will start a worker for the test Redis stream-driven
-`deno-date-iso` service: https://github.com/evanx/deno-date-iso/blob/main/worker.ts
+The `demo.sh` shell script will start a worker for the demo Redis stream-driven
+`deno-date-iso` worker: https://github.com/evanx/deno-date-iso/blob/main/worker.ts
 
 This `demo.sh` script will setup the keys in Redis for this worker, e.g. `deno-date-iso:1:h` for worker ID `1.`
 
@@ -44,7 +44,7 @@ const workerUrl =
     );
 ```
 
-Note that a `workerVersion` of `local` is used for local development, where the `workerRepo` is a local folder.
+Note that a `workerVersion` of `local` is used for local development, where the `workerRepo` is a local folder in this case, rather than an Github URL for example.
 
 This `demo.sh` script will invoke `bootstrap.sh` as follows:
 
@@ -75,9 +75,24 @@ We setup Deno options with `--inspect` and can attach a debugger as seen below:
 
 ![image](https://user-images.githubusercontent.com/899558/134762517-4ccc28b3-6f8e-4ab9-8529-49054eb7f1ee.png)
 
-## Worker lifecycle
+## Redis-driven worker concept
 
-Each worker monitors its `pid` field of its hashes, and must exit as follows if this field changes or the hashes deleted:
+See example worker: https://github.com/evanx/deno-date-iso/blob/main/worker.ts
+
+This `worker.ts` script is a class of Redis-driven microservice as follows:
+
+- the microservice requires a Redis "worker key" as a CLI parameter
+- the worker hashes provide configuration e.g. the `requestStream` key
+- an AES key is provided by `stdin` to decrypt any sensitive credentials in an `encrypted` field
+- the worker sets and monitors the `pid` field to control its lifecycle
+- the worker will `xreadgroup` using the `worker` consumer group to process requests
+- the worker will push the response to a single-entry "list" which will expire after a few seconds
+
+The intention is that other classes of workers can `xadd` requests, and `brpop` responses with a timeout.
+
+### Worker lifecycle controlled via Redis
+
+Each worker monitors its `pid` field of its hashes, and must exit if this field changes:
 
 ```
 await redis.hset(workerKey, ["pid", Deno.pid]);
@@ -85,6 +100,7 @@ await redis.hset(workerKey, ["pid", Deno.pid]);
 let requestCount = 0;
 
 while (config.requestLimit === 0 || requestCount < config.requestLimit) {
+
   if ((await redis.hget(workerKey, "pid")) !== String(Deno.pid)) {
     throw new Error("Aborting because 'pid' field removed/changed");
   }
@@ -103,6 +119,100 @@ while (config.requestLimit === 0 || requestCount < config.requestLimit) {
 }
 
 Deno.exit(0);
+```
+
+### Request processing from Redis stream
+
+We process the Redis `reply` as follows:
+
+```
+  if (!reply || reply.messages.length === 0) {
+    continue;
+  }
+
+  requestCount++;
+
+  if (reply.messages.length !== 1) {
+    throw new Error(`Expecting 1 message: ${reply.messages.length}`);
+  }
+
+  const message = reply.messages[0];
+  const { ref, workerUrl, ...request } = message.fieldValues;
+```
+
+We process the `request` and push the `response` with matching `ref` as follows:
+
+```
+  const tx = redis.tx();
+  tx.lpush(
+    `res:${ref}`,
+    JSON.stringify(Object.assign({ code }, res)),
+  );
+  tx.expire(`res:${ref}`, config.replyExpireSeconds);
+  await tx.flush();
+```
+
+Additionally, we record the response in a response stream
+
+```
+  tx.xadd(config.responseStream, "*", {
+    ref,
+    xid: [xid.unixMs, xid.seqNo].join("-"),
+    workerUrl,
+    code,
+  }, { elements: config.responseStreamLimit });
+```
+
+where we might limit the response stream to a few elements only, for testing and debugging purposes.
+
+### Config from Redis hashes
+
+Our worker will read its config from its Redis `workerKey` as follows:
+
+```
+const configMap = unflattenRedis(await redis.hgetall(workerKey));
+const config = {
+  workerUrl: "https://raw.githubusercontent.com/evanx/deno-date-iso/",
+  requestStream: configMap.get("requestStream") as string,
+  responseStream: configMap.get("responseStream") as string,
+  consumerId: configMap.get("consumerId") as string,
+  requestLimit: parseInt(configMap.get("requestLimit") as string || "0"),
+  encryptedIv: configMap.get("encryptedIv") as string,
+  encryptedAlg: configMap.get("encryptedAlg") as string,
+  encrypted: configMap.get("encrypted") as string,
+  xreadGroupBlockMillis: 2000,
+  replyExpireSeconds: 8,
+};
+```
+
+### Secrets encrypted at rest in Redis
+
+The following util function is used to read an AES key from the `stdin` and use this to decrypt a JSON string e.g. containing sensitive credentials stored in Redis:
+
+```
+export async function decryptJson(
+  ivHex: string, // openssl takes hex args for AES iv and password
+  encryptedBase64: string, // openssl can produce base64 output
+  inputStream = Deno.stdin,
+) {
+  const te = new TextEncoder();
+  const td = new TextDecoder();
+  const [type, input] = (await readStream(inputStream, 256)).split(" ");
+  if (type !== "workerAES-v0") {
+    throw new Error(`Invalid input type: ${type}`);
+  }
+  const secret = decodeHex(te.encode(input));
+  const iv = decodeHex(te.encode(ivHex));
+  const decipher = new Cbc(Aes, secret, iv, Padding.PKCS7);
+  const decrypted = decipher.decrypt(decodeBase64(encryptedBase64));
+  return JSON.parse(td.decode(decrypted));
+}
+```
+
+Then in our worker, we can extract the `encrypted` JSON config simply as follows:
+
+```
+const secretConfig = await decryptJson(config.encryptedIv, config.encrypted);
 ```
 
 <hr>
