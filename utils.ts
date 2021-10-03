@@ -27,14 +27,14 @@ export async function readStream(
 }
 
 export async function decryptJson(
-  ivHex: string, // openssl takes hex args for AES iv and password
-  encryptedBase64: string, // openssl can produce base64 output
+  ivHex: string, // openssl enc takes hex args for AES iv and password
+  encryptedBase64: string, // openssl enc can produce base64 output
   inputStream = Deno.stdin,
 ) {
   const te = new TextEncoder();
   const td = new TextDecoder();
   const [type, input] = (await readStream(inputStream, 256)).split(" ");
-  if (type !== "workerAES-v0") {
+  if (type !== "worker-v0") {
     throw new Error(`Invalid input type: ${type}`);
   }
   const secret = decodeHex(te.encode(input));

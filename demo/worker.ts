@@ -1,5 +1,6 @@
 import { connect } from "https://deno.land/x/redis/mod.ts";
 import { decryptJson, unflattenRedis } from "../utils.ts";
+import * as log from "https://deno.land/std@0.106.0/log/mod.ts";
 
 const redis = await connect({
   hostname: "127.0.0.1",
@@ -20,19 +21,27 @@ if (!/:h$/.test(workerKey)) {
 
 const configMap = unflattenRedis(await redis.hgetall(workerKey));
 const config = {
-  workerUrl: "https://raw.githubusercontent.com/evanx/deno-date-iso/",
+  workerType: "demo-worker",
   requestStream: configMap.get("requestStream") as string,
   responseStream: configMap.get("responseStream") as string,
   consumerId: configMap.get("consumerId") as string,
   requestLimit: parseInt(configMap.get("requestLimit") as string || "0"),
   encryptedIv: configMap.get("encryptedIv") as string,
   encryptedAlg: configMap.get("encryptedAlg") as string,
-  encrypted: configMap.get("encrypted") as string,
+  encryptedJson: configMap.get("encryptedJson") as string,
   xreadGroupBlockMillis: 2000,
   replyExpireSeconds: 8,
 };
 
-const secretConfig = await decryptJson(config.encryptedIv, config.encrypted);
+const secretConfig = await decryptJson(
+  config.encryptedIv,
+  config.encryptedJson,
+);
+if (secretConfig.type !== config.workerType) {
+  throw new Error(
+    `Expecting encryptedJson to have type ${config.workerType}: ${secretConfig.type}`,
+  );
+}
 
 if (await redis.hexists(workerKey, "pid") === 1) {
   throw new Error(
@@ -43,6 +52,8 @@ if (await redis.hexists(workerKey, "pid") === 1) {
 await redis.hset(workerKey, ["pid", Deno.pid]);
 
 let requestCount = 0;
+
+log.info(`Started with secret config type: ${secretConfig.type}`);
 
 while (config.requestLimit === 0 || requestCount < config.requestLimit) {
   if ((await redis.hget(workerKey, "pid")) !== String(Deno.pid)) {
@@ -64,40 +75,71 @@ while (config.requestLimit === 0 || requestCount < config.requestLimit) {
   }
 
   requestCount++;
+  const received = Date.now();
 
   if (reply.messages.length !== 1) {
-    throw new Error(`Expecting 1 message: ${reply.messages.length}`);
+    throw new Error(
+      `messagesLength: Expecting 1 message: ${reply.messages.length}`,
+    );
   }
 
   const { xid, fieldValues } = reply.messages[0];
-  const { ref, workerUrl } = fieldValues;
-  let code;
-  let res;
+  const { ref, type, ...payload } = fieldValues;
   if (!ref) {
-    await redis.hincrby(workerKey, "err:ref", 1);
-    continue;
-  } else if (!workerUrl.startsWith(config.workerUrl)) {
-    await redis.hincrby(workerKey, "err:workerUrl", 1);
-    code = 400;
-    res = { err: "workerUrl", workerUrl, allowPrefix: config.workerUrl };
-  } else {
-    code = 200;
-    res = { data: new Date().toISOString() };
+    throw new Error(`requestRef: Expecting ref property in request`);
   }
+  const res = {
+    ref,
+    source: config.workerType,
+  };
+  if (type !== config.workerType) {
+    throw new Error(
+      `requestType: Request type '${type}' does not match worker type '${config.workerType}`,
+    );
+  }
+  try {
+    Object.assign(res, await handleRequest(payload), { code: 200 });
+  } catch (err) {
+    Object.assign(res, { code: 500, err: { message: err.message }, payload });
+  }
+
   const tx = redis.tx();
   tx.lpush(
     `res:${ref}`,
-    JSON.stringify(Object.assign({ code }, res)),
+    JSON.stringify(
+      Object.assign(res, { time: new Date().toISOString() }, res),
+    ),
   );
   tx.expire(`res:${ref}`, config.replyExpireSeconds);
   tx.xadd(config.responseStream, "*", {
     ref,
+    type: config.workerType,
     xid: [xid.unixMs, xid.seqNo].join("-"),
-    workerUrl,
-    code,
+    res: JSON.stringify(res),
+  });
+  tx.hmset(`req:${ref}:h`, {
+    demoWorkerTrace: JSON.stringify({
+      received,
+      completed: Date.now(),
+      res: JSON.stringify(res),
+    }),
   });
   await tx.flush();
-  console.log(`Processed: ${ref}`, res);
+  log.info(`Processed ref: ${ref}`);
 }
 
 Deno.exit(0);
+
+async function handleRequest(payload: object) {
+  const response = {
+    type: "demo-worker-res",
+    worker: {
+      workerType: config.workerType,
+      workerKey,
+    },
+    request: {
+      payload,
+    },
+  };
+  return response;
+}

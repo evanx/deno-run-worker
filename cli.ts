@@ -57,15 +57,10 @@ const commands = [
   },
 ];
 
-const workerClass = "deno-date-iso";
-const workerRepo = "https://raw.githubusercontent.com/evanx/";
-if (!workerRepo.endsWith("/")) {
-  throw new Error(`Expecting WORKER_REPO to end with slash: ${workerRepo}`);
-}
-const workerVersion = "0.0.1";
-const workerUrl = workerRepo + workerClass + "/main/worker.ts";
-const requestStreamKey = `${workerClass}:req:x`;
-const responseStreamKey = `${workerClass}:res:x`;
+const workerType = "demo-worker";
+const workerVersion = "local";
+const requestStreamKey = `${workerType}:req:x`;
+const responseStreamKey = `${workerType}:res:x`;
 
 console.log(
   `Stream: ${Colors.blue(requestStreamKey)}, command: ${
@@ -117,7 +112,7 @@ if (Deno.args.length === 0) {
     console.error(`Provide arg: <ref>`);
   } else if (command === "xrange-req") {
     const xrangeReply = await redis.xrange(
-      `${workerClass}:req:x`,
+      `${workerType}:req:x`,
       "-",
       "+",
       99,
@@ -157,9 +152,9 @@ if (Deno.args.length === 0) {
   const command = Deno.args[0];
   const arg = Deno.args[1];
   if (command === "setup-worker") {
-    const workerKey = `${workerClass}:${arg}:h`;
+    const workerKey = `${workerType}:${arg}:h`;
     await redis.del(workerKey);
-    await redis.hmset(workerKey, ["workerUrl", workerUrl], [
+    await redis.hmset(workerKey, ["workerType", workerType], [
       "workerVersion",
       workerVersion,
     ], [
@@ -174,7 +169,7 @@ if (Deno.args.length === 0) {
       unflattenRedis(await redis.hgetall(workerKey)),
     );
   } else if (command === "show-worker") {
-    const workerKey = `${workerClass}:${arg}:h`;
+    const workerKey = `${workerType}:${arg}:h`;
     console.log(
       `${Colors.green(workerKey)}`,
       unflattenRedis(await redis.hgetall(workerKey)),
@@ -191,9 +186,20 @@ if (Deno.args.length === 0) {
     });
   } else if (command === "xadd-req") {
     const ref = arg;
+    const tx = redis.tx();
+    tx.hmset(`req:${ref}:h`, {
+      ref,
+      type: workerType,
+      requestData: JSON.stringify({}),
+      created: new Date().toISOString(),
+    });
+    tx.expire(`req:${ref}:h`, 120);
+    await tx.flush();
     const reply = await redis.xadd(requestStreamKey, "*", {
       ref,
-      workerUrl,
+      time: new Date().toISOString(),
+      type: workerType,
+      data: JSON.stringify({}),
     });
     console.log(reply);
   } else {
