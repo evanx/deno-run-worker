@@ -4,13 +4,50 @@ This repo includes scripts to run Deno "workers" e.g. to collectively consume an
 
 ## Goals
 
-We've chosen to explore Redis-driven microservices in Deno, where side-effects are restricted to Redis only. The goal is that these services and their related systems are "fun and fast" to develop and test. We will trial this approach for the development of Telegram chat bots.
+We wish to optimise an archetype of Redis-driven microservices:
+
+- the development of services on ones own laptop must be "fun and fast"
+- no-code automated testing to ensure quality
+- deployments, upgrades and debugging must be relatively pain-free
+
+### Achitecture
+
+We've chosen to explore Redis-driven microservices in Deno, with side-effects restricted to Redis only.
 
 - JavaScript/TypeScript: popular and familiar
 - Deno: secure by default
 - Redis: maps well to programming data structures
 
 We will also explore services that integrate Redis to PostgreSQL such that PostgreSQL can be used for bulk long-term persistence, e.g. https://github.com/evanx/lula-sync.
+
+### Application
+
+We will trial this approach for the development of chat bots. Such applications have the advantage of not requiring front-end infrastructure or coding. The messaging platform provider e.g. Telegram.org,
+offers their own mobile and web clients, with user authentication. This de-scopes everything except the custom back-end services that comprise a chat bot.
+
+We believe a "fun and fast" Deno/Redis backend platform should combine well this application space. A hobbyist chat bot does not require much storage for starters. Redis is great as a simple data store.
+
+#### Scaling
+
+We are interested in scale too. Therefore we wish to provide Redis/PostgreSQL "adapter services" that enable bulk storage, secondary indexes, SQL queries, text search and JSON queries.
+
+We envisage that an application deployment can include adapters from trusted sources, as an extension of the underlying platform, that promotes our "fun and fast" primary goal at scale.
+
+#### Re-scaling
+
+As a stretch goal, we wish to introduce tooling that enables the development of a suite of application services such that:
+
+- services can invoke each other directly as in a monolith
+- services can later be independently deployed and scaled
+
+The idea fermenting is:
+
+- if our service's connection to Redis is considered critical
+- since we intend to provide tooling for no-code automated integration tests against a JSON spec
+- where presumably that spec defines the service interfaces
+- then surely we could automatically marshall requests and responses via Redis
+- where the failure of any Redis command would already be considered a fatal error
+- therefore we are mitigating the "fallacy of distributing computing" that the network is reliable
 
 ## Demo
 
@@ -209,6 +246,8 @@ const secretConfig = await decryptJson(
   config.encryptedJson
 );
 ```
+
+### Utils
 
 ### Request tracing
 
